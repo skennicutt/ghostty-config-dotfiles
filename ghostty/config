@@ -50,4 +50,4 @@
 #
 
 # command = /home/linuxbrew/.linuxbrew/bin/zsh -l -i
-command = tmux source-file /home/jamtape/.config/.tmux.conf && tmux
+command = tmux source-file /home/jamtape/.config/tmux/.tmux.conf && tmux
