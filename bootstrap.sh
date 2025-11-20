@@ -16,16 +16,19 @@ CONFIG_DIR="${HOME}/.config"
 backup_path() {
   local target="$1"
 
+  # $2 is "desired" path or content, just for messages (not used functionally)
+  local desired="${2:-}"
+
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     return 0
   fi
 
   # If it's already the correct symlink, skip
-  if [ -L "$target" ]; then
+  if [ -n "$desired" ] && [ -L "$target" ]; then
     local current
     current="$(readlink "$target" || true)"
-    if [ "$current" = "$2" ]; then
-      echo "✔ $target already points to $2"
+    if [ "$current" = "$desired" ]; then
+      echo "✔ $target already points to $desired"
       return 0
     fi
   fi
@@ -75,6 +78,42 @@ link_config_dir "nvim" "${CONFIG_DIR}/nvim"
 echo ""
 echo "==> Setting up Ghostty config"
 link_config_dir "ghostty" "${CONFIG_DIR}/ghostty"
+
+GHOSTTY_CONF_REPO="${REPO_DIR}/ghostty/config"
+
+# If tmux exists, update Ghostty's command to point to the correct tmux path
+if [ -f "$GHOSTTY_CONF_REPO" ]; then
+  TMUX_PATH="$(command -v tmux || true)"
+
+  if [ -n "$TMUX_PATH" ]; then
+    echo "==> Updating Ghostty command to use tmux at: $TMUX_PATH"
+
+    tmp_file="$(mktemp)"
+
+    # Replace existing 'command =' line, or append one if it doesn't exist
+    awk -v new_cmd="command = \"$TMUX_PATH\"" '
+      BEGIN { replaced = 0 }
+      /^[[:space:]]*command[[:space:]]*=/ && !replaced {
+        print new_cmd
+        replaced = 1
+        next
+      }
+      { print }
+      END {
+        if (!replaced) {
+          print new_cmd
+        }
+      }
+    ' "$GHOSTTY_CONF_REPO" >"$tmp_file"
+
+    mv "$tmp_file" "$GHOSTTY_CONF_REPO"
+    echo "✔ Ghostty config updated at $GHOSTTY_CONF_REPO"
+  else
+    echo "⚠ tmux not found on PATH; skipping Ghostty command update."
+  fi
+else
+  echo "⏭ No Ghostty config file found at $GHOSTTY_CONF_REPO; skipping command update."
+fi
 
 # On macOS, Ghostty can also use ~/Library/Application Support/com.mitchellh.ghostty
 if [ "$(uname -s)" = "Darwin" ]; then
