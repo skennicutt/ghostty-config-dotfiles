@@ -15,15 +15,12 @@ CONFIG_DIR="${HOME}/.config"
 
 backup_path() {
   local target="$1"
-
-  # $2 is "desired" path or content, just for messages (not used functionally)
   local desired="${2:-}"
 
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     return 0
   fi
 
-  # If it's already the correct symlink, skip
   if [ -n "$desired" ] && [ -L "$target" ]; then
     local current
     current="$(readlink "$target" || true)"
@@ -73,6 +70,31 @@ echo "==> Setting up Neovim config"
 link_config_dir "nvim" "${CONFIG_DIR}/nvim"
 
 ###############################################################################
+# tmux
+###############################################################################
+echo ""
+echo "==> Setting up tmux config"
+TMUX_MAIN_CONF="${CONFIG_DIR}/tmux/tmux.conf"
+TMUX_LEGACY_CONF="${HOME}/.tmux.conf"
+
+# Link ~/.config/tmux -> repo/tmux
+link_config_dir "tmux" "${CONFIG_DIR}/tmux"
+
+# Ensure legacy ~/.tmux.conf loads the XDG config
+if [ -f "$TMUX_MAIN_CONF" ] || [ -L "$TMUX_MAIN_CONF" ]; then
+  echo "==> Ensuring legacy ~/.tmux.conf sources ~/.config/tmux/tmux.conf"
+
+  if [ -e "$TMUX_LEGACY_CONF" ] && ! grep -q 'source-file ~/.config/tmux/tmux.conf' "$TMUX_LEGACY_CONF" 2>/dev/null; then
+    backup_path "$TMUX_LEGACY_CONF" "source-file ~/.config/tmux/tmux.conf"
+  fi
+
+  echo 'source-file ~/.config/tmux/tmux.conf' >"$TMUX_LEGACY_CONF"
+  echo "🔗 Created loader $TMUX_LEGACY_CONF"
+else
+  echo "⏭ No ${TMUX_MAIN_CONF} found yet; skipping legacy loader."
+fi
+
+###############################################################################
 # Ghostty
 ###############################################################################
 echo ""
@@ -81,17 +103,32 @@ link_config_dir "ghostty" "${CONFIG_DIR}/ghostty"
 
 GHOSTTY_CONF_REPO="${REPO_DIR}/ghostty/config"
 
-# If tmux exists, update Ghostty's command to point to the correct tmux path
+# Point Ghostty at tmux with explicit config, and prefer zsh if available.
 if [ -f "$GHOSTTY_CONF_REPO" ]; then
   TMUX_PATH="$(command -v tmux || true)"
-
   if [ -n "$TMUX_PATH" ]; then
-    echo "==> Updating Ghostty command to use tmux at: $TMUX_PATH"
+    TMUX_CONF="${CONFIG_DIR}/tmux/tmux.conf"
+    ZSH_PATH="$(command -v zsh || true)"
+
+    if [ -e "$TMUX_CONF" ]; then
+      if [ -n "$ZSH_PATH" ]; then
+        echo "==> Updating Ghostty command to use zsh at: $ZSH_PATH and tmux at: $TMUX_PATH"
+        NEW_CMD="command = SHELL=$ZSH_PATH $TMUX_PATH -f $TMUX_CONF"
+      else
+        echo "⚠ zsh not found; Ghostty will run tmux with its default shell."
+        NEW_CMD="command = $TMUX_PATH -f $TMUX_CONF"
+      fi
+    else
+      echo "⚠ tmux.conf not found at $TMUX_CONF; setting Ghostty to run plain tmux."
+      if [ -n "$ZSH_PATH" ]; then
+        NEW_CMD="command = SHELL=$ZSH_PATH $TMUX_PATH"
+      else
+        NEW_CMD="command = $TMUX_PATH"
+      fi
+    fi
 
     tmp_file="$(mktemp)"
-
-    # Replace existing 'command =' line, or append one if it doesn't exist
-    awk -v new_cmd="command = \"$TMUX_PATH\"" '
+    awk -v new_cmd="$NEW_CMD" '
       BEGIN { replaced = 0 }
       /^[[:space:]]*command[[:space:]]*=/ && !replaced {
         print new_cmd
@@ -123,38 +160,15 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 ###############################################################################
-# tmux
-###############################################################################
-echo ""
-echo "==> Setting up tmux config"
-link_config_dir "tmux" "${CONFIG_DIR}/tmux"
-
-TMUX_MAIN_CONF="${CONFIG_DIR}/tmux/tmux.conf"
-TMUX_LEGACY_CONF="${HOME}/.tmux.conf"
-
-if [ -f "$TMUX_MAIN_CONF" ] || [ -L "$TMUX_MAIN_CONF" ]; then
-  echo "==> Ensuring legacy ~/.tmux.conf sources ~/.config/tmux/tmux.conf"
-
-  # If ~/.tmux.conf exists and isn't the simple source line, back it up
-  if [ -e "$TMUX_LEGACY_CONF" ] && ! grep -q 'source-file ~/.config/tmux/tmux.conf' "$TMUX_LEGACY_CONF" 2>/dev/null; then
-    backup_path "$TMUX_LEGACY_CONF" "source-file ~/.config/tmux/tmux.conf"
-  fi
-
-  # Create or overwrite with a simple loader
-  echo 'source-file ~/.config/tmux/tmux.conf' >"$TMUX_LEGACY_CONF"
-  echo "🔗 Created loader $TMUX_LEGACY_CONF"
-else
-  echo "⏭ No ${TMUX_MAIN_CONF} found in repo yet; skipping loader."
-fi
-
-###############################################################################
 # Final notes
 ###############################################################################
 echo ""
 echo "✅ Done."
 echo "Configs now point to:"
 echo "  Neovim : ${CONFIG_DIR}/nvim -> ${REPO_DIR}/nvim"
-echo "  Ghostty: ${CONFIG_DIR}/ghostty -> ${REPO_DIR}/ghostty"
 echo "  tmux   : ${CONFIG_DIR}/tmux -> ${REPO_DIR}/tmux"
+echo "  Ghostty: ${CONFIG_DIR}/ghostty -> ${REPO_DIR}/ghostty"
 echo ""
-echo "If you open tmux now, it will load ~/.tmux.conf, which sources ~/.config/tmux/tmux.conf."
+echo "If a tmux server was already running, you may want to run:"
+echo "  tmux kill-server"
+echo "then restart Ghostty so tmux picks up the new default shell (zsh)."
